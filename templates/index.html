@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meu Ponto</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">CONTROLE PESSOAL</p>
+      <h1>Meu Ponto</h1>
+    </div>
+    <div class="server">
+      {% if employee %}
+        <strong>{{ employee.name }}</strong>
+        <span>CPF •••.•••.{{ employee.cpf[-5:-2] }}-{{ employee.cpf[-2:] }}</span>
+      {% else %}
+        <strong>Nenhum PDF importado</strong>
+        <span>Importe seu primeiro espelho de ponto</span>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="container">
+    {% if message %}<div class="notice {{ message_kind }}">{{ message }}</div>{% endif %}
+
+    <section class="hero-grid">
+      <article class="card import-card">
+        <div class="card-heading">
+          <div><p class="eyebrow">ATUALIZAÇÃO</p><h2>Importar espelho de ponto</h2></div>
+          <span class="pdf-badge">PDF</span>
+        </div>
+        <p class="muted">Importe quantas vezes quiser. O sistema identifica dias novos e alterações.</p>
+        <form action="/imports" method="post" enctype="multipart/form-data" class="import-form">
+          <label class="file-zone">
+            <input type="file" name="file" accept="application/pdf,.pdf" required>
+            <span class="file-title">Escolher arquivo PDF</span>
+            <span class="file-name">Nenhum arquivo selecionado</span>
+          </label>
+          <label>Quando um dia já existir
+            <select name="mode">
+              <option value="update">Atualizar com o PDF mais recente</option>
+              <option value="add_only">Manter o dia já registrado</option>
+            </select>
+          </label>
+          <button type="submit">Importar e recalcular</button>
+        </form>
+      </article>
+
+      <article class="card balance-card">
+        <div class="card-heading">
+          <div><p class="eyebrow">SALDO ATÉ HOJE</p><h2>{{ selected_month[5:7] }}/{{ selected_month[:4] }}</h2></div>
+          <form method="get">
+            <select name="month" onchange="this.form.submit()">
+              {% for year, month in month_options %}
+                <option value="{{ '%04d-%02d'|format(year, month) }}" {% if selected_month == '%04d-%02d'|format(year, month) %}selected{% endif %}>{{ '%02d/%04d'|format(month, year) }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </div>
+        <div class="big-balance {{ 'positive' if month_balance_value >= 0 else 'negative' }}">{{ month_balance }}</div>
+        <div class="mini-stats">
+          <div><span>Trabalhado</span><strong>{{ worked_total }}</strong></div>
+          <div><span>Esperado</span><strong>{{ expected_to_date }}</strong></div>
+          <div><span>Projeção mensal</span><strong>{{ projection }}</strong></div>
+        </div>
+        {% if incomplete_count %}<div class="warning">{{ incomplete_count }} dia(s) com marcação incompleta</div>{% endif %}
+      </article>
+    </section>
+
+    <section class="summary-grid">
+      <article class="metric card">
+        <span>Carga semanal configurada</span><strong>{{ weekly_total }}</strong>
+      </article>
+      <article class="metric card">
+        <span>Ciclo atual</span><strong>{{ cycle_start.strftime('%d/%m') }} — {{ cycle_end.strftime('%d/%m/%Y') }}</strong>
+      </article>
+      <article class="metric card">
+        <span>Saldo trimestral</span><strong class="{{ 'positive' if cycle_balance_value >= 0 else 'negative' }}">{{ cycle_balance }}</strong>
+        <small>Inclui saldo inicial de {{ opening_balance_display }}</small>
+      </article>
+    </section>
+
+    <section class="card weeks-card">
+      <div class="card-heading">
+        <div><p class="eyebrow">ACOMPANHAMENTO SEMANAL</p><h2>Como estão suas semanas</h2></div>
+        <span class="muted">Meta semanal: {{ weekly_total }}</span>
+      </div>
+      <div class="week-grid">
+        {% for week in weekly_status %}
+          <article class="week-item {% if week.current %}current{% endif %} {% if week.future %}future{% endif %}">
+            <div class="week-title">
+              <div>
+                <strong>{{ week.start.strftime('%d/%m') }} — {{ week.end.strftime('%d/%m') }}</strong>
+                {% if week.current %}<span class="current-badge">Semana atual</span>{% endif %}
+              </div>
+              <strong class="week-balance {% if week.balance_value is not none %}{{ 'positive' if week.balance_value >= 0 else 'negative' }}{% endif %}">{{ week.balance }}</strong>
+            </div>
+            <div class="week-stats">
+              <span>Trabalhado <strong>{{ week.worked }}</strong></span>
+              <span>Esperado até agora <strong>{{ week.expected }}</strong></span>
+              <span>Meta completa <strong>{{ week.target }}</strong></span>
+            </div>
+            {% if week.incomplete %}<small class="week-alert">{{ week.incomplete }} marcação incompleta</small>{% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-heading">
+        <div><p class="eyebrow">DETALHAMENTO</p><h2>Dias do mês</h2></div>
+        <span class="legend"><i></i> marcação incompleta</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Data</th><th>Dia</th><th>Marcações</th><th>Trabalhado</th><th>Esperado</th><th>Saldo</th><th>Ação</th></tr></thead>
+          <tbody>
+          {% for row in rows %}
+            <tr class="{% if row.incomplete %}incomplete{% endif %} {% if row.future %}future{% endif %} {% if row.holiday %}holiday-row{% endif %}">
+              <td><strong>{{ row.date.strftime('%d/%m') }}</strong></td>
+              <td>{{ row.weekday }}{% if row.holiday %}<span class="holiday-label">{{ row.holiday }}</span>{% endif %}</td>
+              <td class="punches">
+                {% if row.punches %}
+                  {% for punch in row.punches %}<span>{{ punch[:5] }}</span>{% endfor %}
+                {% elif row.holiday %}
+                  <span class="holiday-status">Feriado</span>
+                {% else %}
+                  <span class="empty">Sem marcações</span>
+                {% endif %}
+              </td>
+              <td>{{ row.worked }}</td><td>{{ row.expected }}</td>
+              <td class="{% if row.balance_value is not none %}{{ 'positive' if row.balance_value >= 0 else 'negative' }}{% endif %}">{{ row.balance }}</td>
+              <td>
+                {% if row.holiday %}
+                  <form action="/holidays/{{ row.date.isoformat() }}/delete" method="post">
+                    <input type="hidden" name="return_month" value="{{ selected_month }}">
+                    <button class="row-action remove" type="submit" title="Remover {{ row.holiday }}">Remover feriado</button>
+                  </form>
+                {% else %}
+                  <button class="row-action mark-holiday" type="button" data-date="{{ row.date.isoformat() }}" data-display-date="{{ row.date.strftime('%d/%m/%Y') }}">Marcar feriado</button>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <dialog id="holiday-dialog" class="holiday-dialog">
+      <form action="/holidays" method="post">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">NOVO FERIADO</p><h2>Registrar em <span id="holiday-dialog-date"></span></h2></div>
+          <button class="dialog-close" type="button" aria-label="Fechar">×</button>
+        </div>
+        <input id="holiday-date-input" type="hidden" name="holiday_date">
+        <input type="hidden" name="return_month" value="{{ selected_month }}">
+        <label>Descrição
+          <input id="holiday-name-input" type="text" name="name" maxlength="100" placeholder="Ex.: Feriado municipal" required>
+        </label>
+        <div class="dialog-actions">
+          <button class="secondary dialog-cancel" type="button">Cancelar</button>
+          <button type="submit">Registrar e recalcular</button>
+        </div>
+      </form>
+    </dialog>
+
+    <section class="card holidays-card">
+      <div class="card-heading">
+        <div><p class="eyebrow">CALENDÁRIO</p><h2>Feriados e dispensas</h2></div>
+        <span class="muted">A carga esperada fica zerada na data</span>
+      </div>
+      <div class="holidays-layout">
+        <form action="/holidays" method="post" class="holiday-form">
+          <input type="hidden" name="return_month" value="{{ selected_month }}">
+          <label>Data
+            <input type="date" name="holiday_date" required>
+          </label>
+          <label>Descrição
+            <input type="text" name="name" maxlength="100" placeholder="Ex.: Dia do Servidor Público" required>
+          </label>
+          <button type="submit">Registrar feriado</button>
+        </form>
+        <div class="holiday-list-wrap">
+          {% if holidays %}
+            <ul class="holiday-list">
+            {% for holiday in holidays %}
+              <li>
+                <div><strong>{{ holiday.holiday_date[8:10] }}/{{ holiday.holiday_date[5:7] }}/{{ holiday.holiday_date[:4] }}</strong><span>{{ holiday.name }}</span></div>
+                <form action="/holidays/{{ holiday.holiday_date }}/delete" method="post"><input type="hidden" name="return_month" value="{{ selected_month }}"><button class="text-button" type="submit" aria-label="Remover {{ holiday.name }}">Remover</button></form>
+              </li>
+            {% endfor %}
+            </ul>
+          {% else %}<p class="empty-state compact">Nenhum feriado cadastrado.</p>{% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="two-columns">
+      <article class="card settings-card">
+        <div><p class="eyebrow">REGRAS</p><h2>Jornada e banco de horas</h2></div>
+        <form action="/settings" method="post">
+          <div class="schedule-list">
+          {% set field_names = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'] %}
+          {% for weekday in range(7) %}
+            <label><span>{{ weekday_names[weekday] }}</span><input type="number" min="0" max="1440" step="1" name="{{ field_names[weekday] }}" value="{{ schedules[weekday] }}"><small>minutos</small></label>
+          {% endfor %}
+          </div>
+          <div class="form-row">
+            <label>Mês inicial do ciclo
+              <select name="cycle_anchor_month">
+                {% for month in range(1, 13) %}<option value="{{ month }}" {% if month == cycle_anchor %}selected{% endif %}>{{ '%02d'|format(month) }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>Saldo inicial
+              <div class="inline-inputs">
+                <select name="opening_balance_sign"><option value="1" {% if opening_balance >= 0 %}selected{% endif %}>+</option><option value="-1" {% if opening_balance < 0 %}selected{% endif %}>−</option></select>
+                <input name="opening_balance_hours" type="number" min="0" value="{{ (opening_balance|abs) // 60 }}"><span>h</span>
+                <input name="opening_balance_minutes" type="number" min="0" max="59" value="{{ (opening_balance|abs) % 60 }}"><span>min</span>
+              </div>
+            </label>
+          </div>
+          <button type="submit">Salvar configuração</button>
+        </form>
+      </article>
+
+      <article class="card history-card">
+        <div><p class="eyebrow">AUDITORIA</p><h2>Importações recentes</h2></div>
+        {% if imports %}
+          <ul class="history-list">
+          {% for item in imports %}
+            <li><div><strong>{{ '%02d/%04d'|format(item.reference_month, item.reference_year) }}</strong><span>{{ item.original_name }}</span></div><small>{{ item.inserted_days }} novos · {{ item.updated_days }} atualizados<br>{{ item.imported_at }}</small></li>
+          {% endfor %}
+          </ul>
+        {% else %}<p class="empty-state">As importações aparecerão aqui.</p>{% endif %}
+      </article>
+    </section>
+  </main>
+  <script>
+    const fileInput = document.querySelector('input[type="file"]');
+    if (fileInput) fileInput.addEventListener('change', () => {
+      document.querySelector('.file-name').textContent = fileInput.files[0]?.name || 'Nenhum arquivo selecionado';
+    });
+    const holidayDialog = document.querySelector('#holiday-dialog');
+    const holidayDateInput = document.querySelector('#holiday-date-input');
+    const holidayNameInput = document.querySelector('#holiday-name-input');
+    const holidayDialogDate = document.querySelector('#holiday-dialog-date');
+    document.querySelectorAll('.mark-holiday').forEach(button => {
+      button.addEventListener('click', () => {
+        holidayDateInput.value = button.dataset.date;
+        holidayDialogDate.textContent = button.dataset.displayDate;
+        holidayNameInput.value = '';
+        holidayDialog.showModal();
+        holidayNameInput.focus();
+      });
+    });
+    document.querySelector('.dialog-close')?.addEventListener('click', () => holidayDialog.close());
+    document.querySelector('.dialog-cancel')?.addEventListener('click', () => holidayDialog.close());
+    holidayDialog?.addEventListener('click', event => {
+      if (event.target === holidayDialog) holidayDialog.close();
+    });
+  </script>
+</body>
+</html>
+
